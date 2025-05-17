@@ -10,9 +10,7 @@ app = Flask(__name__)
 CORS(app)
 
 # ======= KẾT NỐI MONGODB =======
-import os
-uri = os.environ.get("MONGO_URI")
-
+uri = "mongodb+srv://lhdhuy124:O5ZFsMYwjHJMK4Dv@cluster0.ldwlz.mongodb.net/beauty-box"
 client = MongoClient(uri)
 db = client["beauty-box"]
 products_col = db["products"]
