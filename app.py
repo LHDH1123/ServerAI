@@ -151,6 +151,7 @@ def api_recommend_by_id():
 # ====== START SERVER LOCAL ======
 if __name__ == '__main__':
     print("🚀 Flask server đang chạy tại http://127.0.0.1:3030")
+    refresh_all_data()
     app.run(debug=True, port=3030)
 # if __name__ == '__main__':
 #     print("🚀 Flask server running at http://127.0.0.1:3030")
