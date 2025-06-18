@@ -4,6 +4,9 @@ from pymongo import MongoClient
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity, linear_kernel
+import hashlib
+import json
+import os
 
 # ====== INIT FLASK ======
 app = Flask(__name__)
@@ -11,15 +14,15 @@ CORS(app)
 
 # ====== CONNECT TO MONGODB ======
 uri = "mongodb+srv://lhdhuy124:O5ZFsMYwjHJMK4Dv@cluster0.ldwlz.mongodb.net/beauty-box"
-# import os
-# uri = os.environ.get("MONGO_URI")
-
 client = MongoClient(uri)
 db = client["beauty-box"]
 products_col = db["products"]
 categories_col = db["categorys"]
 brands_col = db["brands"]
 reviews_col = db["reviews"]
+
+# ====== GLOBAL VARIABLES ======
+last_checksum = None
 
 # ====== REFRESH DATA FUNCTION ======
 def refresh_all_data():
@@ -76,7 +79,33 @@ def refresh_all_data():
     title_vectorizer = TfidfVectorizer(stop_words='english')
     title_tfidf = title_vectorizer.fit_transform(df_merged['title'])
 
-# ====== SEARCH + RECOMMEND ======
+# ====== CACHE VALIDATION ======
+def calculate_data_checksum():
+    product_data = list(products_col.find({"deleted": False}, {"_id": 1, "title": 1}))
+    review_data = list(reviews_col.find({"public": True}, {"_id": 1, "rating": 1, "product_id": 1}))
+    brand_data = list(brands_col.find({}, {"_id": 1, "name": 1}))
+    category_data = list(categories_col.find({}, {"_id": 1, "title": 1}))
+
+    combined_data = json.dumps({
+        "products": product_data,
+        "reviews": review_data,
+        "brands": brand_data,
+        "categories": category_data
+    }, sort_keys=True, default=str)
+
+    return hashlib.md5(combined_data.encode('utf-8')).hexdigest()
+
+def check_and_refresh_data():
+    global last_checksum
+    current_checksum = calculate_data_checksum()
+    if current_checksum != last_checksum:
+        print("🔄 Dữ liệu thay đổi, làm mới mô hình gợi ý...")
+        refresh_all_data()
+        last_checksum = current_checksum
+    else:
+        print("✅ Dữ liệu không thay đổi, không cần làm mới.")
+
+# ====== RECOMMENDATION CORE ======
 def search_title_by_similarity(input_title, top_n=1):
     input_vec = title_vectorizer.transform([input_title])
     cosine_sim = linear_kernel(input_vec, title_tfidf).flatten()
@@ -101,8 +130,7 @@ def search_and_recommend_by_title(input_title, top_n=5):
     matched_titles = search_title_by_similarity(input_title, top_n=1)
     if not matched_titles:
         return None
-    best_match = matched_titles[0]
-    return recommend_hybrid(best_match, top_n=top_n)
+    return recommend_hybrid(matched_titles[0], top_n)
 
 def recommend_hybrid_by_product_id(product_id, top_n=5):
     if product_id not in df_products['product_id'].values:
@@ -124,17 +152,19 @@ def recommend_hybrid_by_product_id(product_id, top_n=5):
 # ====== API ROUTES ======
 @app.route('/recommend/by-title', methods=['GET'])
 def api_recommend_by_title():
+    check_and_refresh_data()
     input_title = request.args.get('title')
     top_n = int(request.args.get('top_n', 5))
     if not input_title:
         return jsonify({'error': 'Missing "title" parameter'}), 400
     result = search_and_recommend_by_title(input_title, top_n)
     if result is None:
-        return jsonify({'message': 'Không tìm thấy sản phẩm'}), 404
+        return jsonify({'message': 'Không tìm thấy sản phẩm hoặc gợi ý'}), 404
     return jsonify(result.to_dict(orient='records'))
 
 @app.route('/recommend/by-id', methods=['GET'])
 def api_recommend_by_id():
+    check_and_refresh_data()
     product_id = request.args.get('product_id')
     top_n_str = request.args.get('top_n', '5')
     try:
@@ -148,12 +178,14 @@ def api_recommend_by_id():
         return jsonify({'message': 'Không tìm thấy sản phẩm hoặc gợi ý'}), 404
     return jsonify(result.to_dict(orient='records'))
 
-# ====== START SERVER LOCAL ======
+
+refresh_all_data()  # ✅ GỌI NGAY KHI IMPORT FILE
+last_checksum = calculate_data_checksum()
+
+# ====== START SERVER ======
 if __name__ == '__main__':
     print("🚀 Flask server đang chạy tại http://127.0.0.1:3030")
-    refresh_all_data()
+    refresh_all_data()  # ⚠️ CHẠY NGAY ĐẦU TIÊN
+    last_checksum = calculate_data_checksum()
     app.run(debug=True, port=3030)
-# if __name__ == '__main__':
-#     print("🚀 Flask server running at http://127.0.0.1:3030")
-#     refresh_all_data()
-#     app.run(host="127.0.0.1", port=3030, debug=True)
+
